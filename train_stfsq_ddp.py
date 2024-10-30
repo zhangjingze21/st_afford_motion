@@ -48,12 +48,22 @@ def main(cfg: DictConfig) -> None:
     
     # prepare training dataset
     train_dataset = create_dataset(cfg.task.dataset, cfg.task.train.phase, gpu=cfg.gpu)
+    
     if cfg.gpu == 0:
         logger.info(f'Load train dataset size: {len(train_dataset)}')
     train_sampler = DistributedSampler(train_dataset, shuffle=True)
     
     train_dataloader = train_dataset.get_dataloader(
         sampler=train_sampler,
+        batch_size=cfg.task.train.batch_size,
+        collate_fn=collate_fn_general,
+        num_workers=cfg.task.train.num_workers,
+        pin_memory=True,
+    )
+    
+    test_dataset = create_dataset(cfg.task.dataset, "test", gpu=cfg.gpu, contact_folder="/mnt/lustre/home/jingze/dev/motion/st_afford_motion/data/HUMANISE")
+    logger.info(f'Load test dataset size: {len(test_dataset)}')
+    test_dataloader = test_dataset.get_dataloader(
         batch_size=cfg.task.train.batch_size,
         collate_fn=collate_fn_general,
         num_workers=cfg.task.train.num_workers,
@@ -72,6 +82,8 @@ def main(cfg: DictConfig) -> None:
         cfg=cfg.task.train,
         model=model,
         dataloader=train_dataloader,
+        test_dataset=test_dataset,
+        test_dataloader=test_dataloader,
         device=device,
         save_dir=cfg.ckpt_dir,
         gpu=cfg.gpu,

@@ -28,6 +28,187 @@ def translation_to_transform(translation: np.ndarray) -> np.ndarray:
     transform[0:3, -1] = translation
     return transform
 
+
+@DATASET.register()
+class MotionDataset(Dataset):
+    """ Contact motion dataset
+    """
+    def __init__(self, cfg: DictConfig, phase: str, **kwargs):
+        """ Initialize the dataset
+
+        Args:
+            cfg: configuration object
+            phase: phase string, can be 'train' and test
+        """
+        self.cfg = cfg
+        self.phase = phase
+        self.gpu = kwargs['gpu'] if 'gpu' in kwargs else 0
+
+        self.data_dir = cfg.data_dir
+        self.sets = cfg.sets
+        self.sets_config = cfg.sets_config
+        self.shuffle_seed = cfg.shuffle_seed
+        
+        self.motion_type = cfg.data_repr
+        self.contact_type = cfg.contact_type
+        self.contact_joints = cfg.contact_joints
+        self.use_raw_dist = cfg.use_raw_dist
+        self.sigma = cfg.sigma
+        self.num_points = cfg.num_points
+        self.max_horizon = cfg.max_horizon
+        self.min_horizon = cfg.min_horizon
+        self.mix_train_ratio = cfg.mix_train_ratio
+
+        ## transform configuration
+        if self.phase == 'train' or self.phase == 'all':
+            self.transform_list = cfg.train_transforms
+        else:
+            self.transform_list = cfg.test_transforms
+        self.transform = make_default_transform(self.transform_list, cfg.transform_cfg)
+
+        self._load_datasets()
+        self._prepare_statistics()
+    
+    def _load_split_ids(self):
+        split_ids = defaultdict(list)
+
+        for s in self.sets:
+            txt = os.path.join(self.data_dir, f'{s}/{self.phase}.txt')
+            if s == 'HumanML3D' and not self.sets_config.HumanML3D.use_mirror:
+                txt = os.path.join(self.data_dir, f'{s}/{self.phase}_without_mirror.txt')
+            with open(txt, 'r') as f:
+                lines = f.readlines()
+            for line in lines:
+                line = line.strip('\n')
+                split_ids[s].append(int(line))
+        
+        return split_ids
+    
+    def _load_datasets(self):
+        """ Load the dataset """
+        split_ids = self._load_split_ids()
+
+        self.all_data = []
+        for s in self.sets:
+            set_data = []
+            anno = pd.read_csv(os.path.join(self.data_dir, f'{s}/contact_motion/anno.csv'))
+            for i in tqdm(range(len(anno))):
+                if i not in split_ids[s]:
+                    continue
+
+                scene_id = anno.loc[i]['scene_id']
+                scene_id = '' if type(scene_id) != str else scene_id
+                scene_trans = np.array([
+                    anno.loc[i]['scene_trans_x'],
+                    anno.loc[i]['scene_trans_y'],
+                    anno.loc[i]['scene_trans_z'],
+                ], dtype=np.float32)
+                desc = anno.loc[i]['utterance']
+                desc = [] if type(desc) != str or desc == '' else desc.split('$$')
+
+                motion = np.load(os.path.join(self.data_dir, f'{s}/contact_motion/motions/{i:0>5}.npy'))
+                if motion.shape[0] < self.min_horizon or motion.shape[0] > self.max_horizon:
+                    continue
+                set_data.append((s, i, scene_id, scene_trans, desc))
+            if self.gpu == 0:
+                logger.info(f"Load {len(set_data)} cases in {s} dataset")
+            self.all_data.extend(set_data)
+        
+        self.indices = list(range(len(self.all_data)))
+        if self.phase == 'train' or self.phase == 'all':
+            random.shuffle(self.indices)
+        if self.phase == 'test':
+            random.seed(self.shuffle_seed) # for test set, we use the same random seed to ensure the same order
+            random.shuffle(self.indices)
+    
+    def _prepare_statistics(self):
+        """ Prepare statistics for normalization """
+        mean_std_path = os.path.join(self.data_dir, f"Mean_Std_CM_{'_'.join(self.sets)}_{self.motion_type}.npz")
+        try:
+            npzfile = np.load(mean_std_path)
+            self.mean = npzfile['mean']
+            self.std = npzfile['std']
+            if self.gpu == 0:
+                logger.info(f"Load mean and std from {mean_std_path}")
+        except:
+            all_poses = []
+            for s, i, _, _, _ in self.all_data:
+                motion = np.load(os.path.join(self.data_dir, f'{s}/contact_motion/motions/{i:0>5}.npy'))
+                b, j, d = motion.shape
+                all_poses.append(motion.reshape(b, j * d))
+            all_poses = np.concatenate(all_poses, axis=0)
+
+            self.mean = all_poses.mean(axis=0, keepdims=True)
+            self.std = all_poses.std(axis=0, keepdims=True)
+            np.savez(mean_std_path, mean=self.mean, std=self.std)
+            if self.gpu == 0:
+                logger.info(f"Save mean and std to {mean_std_path}")
+
+
+    def get_dataloader(self, **kwargs):
+        """ Get dataloader
+        """
+        return DataLoader(self, **kwargs)
+    
+    def normalize(self, motion: np.ndarray) -> np.ndarray:
+        """ Normalize the motion
+
+        Args:
+            motion: motion data to be normalized
+        
+        Return:
+            Normalized motion
+        """
+        return (motion - self.mean) / self.std
+
+    def denormalize(self, motion: np.ndarray) -> np.ndarray:
+        """ Denormalize the motion
+
+        Args:
+            motion: motion data to be denormalized
+        
+        Return:
+            Denormalized motion
+        """
+        return motion * self.std + self.mean
+    
+    def __len__(self):
+        return len(self.all_data)
+
+    def __getitem__(self, idx: int):
+        if self.indices is None:
+            index = idx
+        else:
+            index = self.indices[idx]
+        
+        s, i, scene_id, scene_trans, desc = self.all_data[index]
+        motion = np.load(os.path.join(self.data_dir, f'{s}/contact_motion/motions/{i:0>5}.npy'))
+        
+        ## motion
+        motion = motion.reshape(motion.shape[0], -1)
+        l, d = motion.shape
+        motion = np.concatenate([
+            motion,
+            np.zeros((self.max_horizon - l, d), dtype=np.float32)
+        ], axis=0)
+        motion_mask = np.concatenate([
+            np.zeros((l,), dtype=bool),
+            np.ones((self.max_horizon - l,), dtype=bool)
+        ], axis=0)
+
+        data = {
+            'x': motion,
+            'x_mask': motion_mask,
+        }
+        
+        if self.transform is not None:
+            data = self.transform(data)
+        
+        ## normalize motion
+        data['x'] = self.normalize(data['x'])
+
+        return data
+
 @DATASET.register()
 class MotionXDataset(Dataset):
     """ Cross modal motion dataset

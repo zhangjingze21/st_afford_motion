@@ -18,3 +18,23 @@ class MultiScaleReConsLossWithMask(nn.Module):
         loss = self.Loss(motion_pred, motion_gt)
         loss = (loss * (1. - mask)).sum((-2, -1)) / (1. - mask).sum((-2, -1)) / motion_gt.shape[-1]
         return torch.mean(loss)
+    
+def calculate_mpjpe(gt_joints, pred_joints):
+    """
+    gt_joints: num_poses x num_joints(22) x 3
+    pred_joints: num_poses x num_joints(22) x 3
+    (obtained from recover_from_ric())
+    """
+    assert gt_joints.shape == pred_joints.shape, f"GT shape: {gt_joints.shape}, pred shape: {pred_joints.shape}"
+
+    # Align by root (pelvis)
+    pelvis = gt_joints[:, [0]].mean(1)
+    gt_joints = gt_joints - torch.unsqueeze(pelvis, dim=1)
+    pelvis = pred_joints[:, [0]].mean(1)
+    pred_joints = pred_joints - torch.unsqueeze(pelvis, dim=1)
+
+    # Compute MPJPE
+    mpjpe = torch.linalg.norm(pred_joints - gt_joints, dim=-1) # num_poses x num_joints=22
+    mpjpe_seq = mpjpe.mean(-1) # num_poses
+
+    return mpjpe_seq

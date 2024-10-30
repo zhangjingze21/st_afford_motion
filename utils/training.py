@@ -8,12 +8,14 @@ from loguru import logger
 from utils.io import Board
 from diffusion.resample import uniform_sampling
 
-from utils.losses import MultiScaleReConsLossWithMask
+from utils.losses import MultiScaleReConsLossWithMask, calculate_mpjpe
 
 class STFSQTrainLoop:
-    def __init__(self, *, cfg, model, dataloader, **kwargs) -> None:
+    def __init__(self, *, cfg, model, dataloader, test_dataset, test_dataloader, **kwargs) -> None:
         self.model = model
         self.dataloader = dataloader
+        self.test_dataloader = test_dataloader
+        self.test_dataset = test_dataset
         self.cfg = cfg
 
         self.lr = cfg.lr
@@ -21,6 +23,7 @@ class STFSQTrainLoop:
         self.max_epochs = cfg.max_steps // len(self.dataloader) + 1
         self.log_every_step = cfg.log_every_step
         self.save_every_step = cfg.save_every_step
+        self.test_every_step = cfg.test_every_step
 
         self.resume_checkpoint = cfg.resume_ckpt
         self.weight_decay = cfg.weight_decay
@@ -160,6 +163,30 @@ class STFSQTrainLoop:
                     for key in losses:
                         write_dict[f'train/{key}'] = losses[key]
                     Board().write(write_dict)
+
+                if self.gpu == 0 and self.step % self.test_every_step == 0:
+                    self.model.eval()
+                    
+                    with torch.no_grad():
+                        mpjpe = 0
+                        for test_it, test_data in enumerate(self.test_dataloader):
+                            gt_motion = test_data['x'].to(self.device)
+                            gt_mask = test_data['x_mask'].to(self.device)
+                            
+                            pred_motion, loss_level, loss_vq, all_perplexity = self.model(gt_motion, gt_mask)
+                            pred_motion_denorm = self.test_dataset.denormalize(pred_motion.cpu().detach().numpy())
+                            
+                            mpjpe += calculate_mpjpe(gt_motion, pred_motion_denorm)
+                            
+                        mpjpe = mpjpe / len(self.test_dataloader)
+                        logger.info(f"[TEST] ==> MPJPE: {mpjpe.item():.5f}")
+                        
+                        write_dict = {'step': self.step, 'test/epoch': epoch, 'test/mpjpe': mpjpe.item()}
+                        Board().write(write_dict)
+                            
+                            
+                    
+                    self.model.train()
 
                 if self.gpu == 0 and self.step % self.save_every_step == 0:
                     ## save model
