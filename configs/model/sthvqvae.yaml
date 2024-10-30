@@ -1,0 +1,37 @@
+name: STHVQVAE
+
+## modeling space
+input_feats: -1
+data_repr: 'pos'
+
+## conditions
+## 1. contact
+contact_model:
+  contact_type: 'contact_cont_joints' # ['contact_one_joints', 'contact_all_joints', 'contact_cont_joints', 'contact_pelvis']
+  contact_joints: [0, 10, 11, 12, 20, 21]
+
+  planes: [32, 64, 128, 256]
+  num_points: ${task.dataset.num_points}
+  blocks: [2, 2, 2, 2]
+
+
+## STVQVAE
+sthvqvae:
+  code_dim: 256
+  output_emb_width: 256
+  width: 384
+  nb_code: 1000
+  down_t: 2
+  stride_t: 2
+  depth: 3
+  dilation_growth_rate: 3
+  quantizer: hfsq
+  nb_joints: 22
+  v_patch_nums: [16, 24, 32, 33, 33]
+  norm: null
+  rand_ratio: 0.0
+  recons_loss: l1_smooth
+  activation: relu
+
+
+

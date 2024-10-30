@@ -9,53 +9,41 @@ from utils.spatial import (
     get_humanise_level_idx
 )
 from utils.losses import MultiScaleReConsLossWithMask 
+from omegaconf import DictConfig
 
 class SpatialHumanVQVAE(nn.Module):
-    def __init__(self,
-                 args,
-                 nb_code=1024,
-                 code_dim=512,
-                 output_emb_width=512,
-                 down_t=3,
-                 stride_t=2,
-                 width=512,
-                 depth=3,
-                 dilation_growth_rate=3,
-                 activation='relu',
-                 norm=None,
-                 v_patch_nums=(16, 24, 32, 40, 49)):
-        
+    def __init__(self, cfg: DictConfig):
         super().__init__()
-        self.code_dim = code_dim
-        self.down_t = down_t
-        self.quant = args.quantizer
-        self.nb_joints = 21 if args.dataname == 'kit' else 22
+        self.code_dim = cfg.code_dim
+        self.down_t = cfg.down_t
+        self.quant = cfg.quantizer
+        self.nb_joints = cfg.nb_joints
         
-        self.humanise_level_idx = get_humanise_level_idx(len(v_patch_nums))
-        self.motion_feat_dim = get_humanise_motion_feature_dim_list(len(v_patch_nums), self.humanise_level_idx)
-        self.output_emb_width = output_emb_width
+        self.humanise_level_idx = get_humanise_level_idx(len(cfg.v_patch_nums))
+        self.motion_feat_dim = get_humanise_motion_feature_dim_list(len(cfg.v_patch_nums), self.humanise_level_idx)
+        self.output_emb_width = cfg.output_emb_width
         
-        self.num_code = [nb_code] * len(v_patch_nums)
-        self.v_patch_nums = v_patch_nums
-        self.num_level = len(v_patch_nums)
+        self.num_code = [cfg.nb_code] * len(cfg.v_patch_nums)
+        self.v_patch_nums = cfg.v_patch_nums
+        self.num_level = len(cfg.v_patch_nums)
         assert len(self.motion_feat_dim) == self.num_level, "motion_feat_dim should have the same length as level"
         
         ## create encoder and decoder for different scales
         ## one encoder and multi-decoder for different scales
         self.encoder = nn.ModuleList(
-            [Encoder(self.motion_feat_dim[l], output_emb_width, down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm) for l in range(self.num_level)]
+            [Encoder(self.motion_feat_dim[l], cfg.output_emb_width, cfg.down_t, cfg.stride_t, cfg.width, cfg.depth, cfg.dilation_growth_rate, activation=cfg.activation, norm=cfg.norm) for l in range(self.num_level)]
         )
-        self.decoder = Decoder(self.motion_feat_dim[-1], output_emb_width, down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)
+        self.decoder = Decoder(self.motion_feat_dim[-1], cfg.output_emb_width, cfg.down_t, cfg.stride_t, cfg.width, cfg.depth, cfg.dilation_growth_rate, activation=cfg.activation, norm=cfg.norm)
         
         if self.quant == "hfsq":
             self.quantizer = nn.ModuleList(
-                [STFSQ(vocab_size=self.num_code[l], dim=code_dim, patch_length=self.v_patch_nums[l], sequence_length=self.v_patch_nums[-1], rratio=args.rand_ratio) for l in range(self.num_level)]
+                [STFSQ(vocab_size=self.num_code[l], dim=cfg.code_dim, patch_length=self.v_patch_nums[l], sequence_length=self.v_patch_nums[-1], rratio=cfg.rand_ratio) for l in range(self.num_level)]
             )
         else:
             raise ValueError('Invalid quantizer')
         
-        if getattr(args, 'recons_loss', None) is not None:
-            self.recons_loss = MultiScaleReConsLossWithMask(recons_loss=args.recons_loss, nb_joints=self.nb_joints)
+        if cfg.recons_loss is not None:
+            self.recons_loss = MultiScaleReConsLossWithMask(recons_loss=cfg.recons_loss, nb_joints=self.nb_joints)
         
     @torch.no_grad()
     def encode(self, x):
