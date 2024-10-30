@@ -169,16 +169,20 @@ class STFSQTrainLoop:
                     
                     with torch.no_grad():
                         mpjpe = 0
+                        nb_iters = 0
                         for test_it, test_data in enumerate(self.test_dataloader):
                             gt_motion = test_data['x'].to(self.device)
                             gt_mask = test_data['x_mask'].to(self.device)
                             
                             pred_motion, loss_level, loss_vq, all_perplexity = self.model(gt_motion, gt_mask)
-                            pred_motion_denorm = self.test_dataset.denormalize(pred_motion.cpu().detach().numpy())
+                            pred_motion_denorm = self.test_dataset.denormalize(pred_motion.cpu()).cuda()
                             
-                            mpjpe += calculate_mpjpe(gt_motion, pred_motion_denorm)
+                            for i in range(pred_motion_denorm.shape[0]):
+                                nb_iters += 1
+                                motion_len = pred_motion_denorm.shape[1] - torch.sum(gt_mask[i]).item()
+                                mpjpe += calculate_mpjpe(gt_motion[i][:motion_len].reshape(motion_len, 22, 3), pred_motion_denorm[i][:motion_len].reshape(motion_len, 22, 3)).mean()
                             
-                        mpjpe = mpjpe / len(self.test_dataloader)
+                        mpjpe = mpjpe / nb_iters
                         logger.info(f"[TEST] ==> MPJPE: {mpjpe.item():.5f}")
                         
                         write_dict = {'step': self.step, 'test/epoch': epoch, 'test/mpjpe': mpjpe.item()}
