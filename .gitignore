@@ -5,3 +5,5 @@ outputs
 body_models
 a.py
 *.hide
+
+slurm*.out
