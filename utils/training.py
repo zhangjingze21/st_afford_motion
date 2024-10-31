@@ -126,7 +126,17 @@ class STFSQTrainLoop:
             self._freeze_scene_model_batchnorm() # freeze batchnorm in scene model if the model has scene model
             if self.is_distributed:
                 self.dataloader.sampler.set_epoch(epoch)
+                
+            avg_loss_level = 0.
+            avg_loss_vq = 0.
+            avg_loss_recons = 0.
+            avg_loss_sum = 0.
+            nb_iter = 0
+            avg_perplexity = [0. for _ in range(self.model.module.num_level)]
+            
             for it, data in enumerate(self.dataloader): 
+                nb_iter += 1
+                
                 gt_motion = data['x'].to(self.device)
                 gt_mask = data['x_mask'].to(self.device)
                 
@@ -136,6 +146,13 @@ class STFSQTrainLoop:
                 pred_motion, loss_level, loss_vq, all_perplexity = self.model(gt_motion, gt_mask)
                 
                 loss = self.cfg.loss_level * loss_level + self.cfg.loss_vq * loss_vq + self.model.module.recons_loss(pred_motion, gt_motion, gt_mask)
+                
+                
+                avg_loss_level += loss_level.item()
+                avg_loss_vq += loss_vq.item()
+                avg_loss_recons += self.model.module.recons_loss(pred_motion, gt_motion, gt_mask).item()
+                avg_loss_sum += loss.item()
+                avg_perplexity = [avg_perplexity[i] + all_perplexity[i] for i in range(len(all_perplexity))]
                 
                 loss.backward()
 
@@ -147,16 +164,18 @@ class STFSQTrainLoop:
                 if self.gpu == 0 and self.step % self.log_every_step == 0:
                     ## log with loguru
                     losses = {
-                        'loss_level': loss_level.item(),
-                        'loss_vq': loss_vq.item(),
-                        'recons_loss': self.model.module.recons_loss(pred_motion, gt_motion, gt_mask).item(),
-                        'loss': loss.item()
+                        'loss_level': avg_loss_level / nb_iter,
+                        'loss_vq': avg_loss_vq / nb_iter,
+                        'loss_recons': avg_loss_recons / nb_iter,
+                        'loss': avg_loss_sum / nb_iter
                     }
-                    losses.update({f'perplexity_{i}': all_perplexity[i] for i in range(len(all_perplexity))})
+                    losses.update({f'perplexity_{i}': avg_perplexity[i] / nb_iter for i in range(len(avg_perplexity))})
 
                     logger.info(
                         f"[TRAIN] ==> Epoch: {epoch:3d} | Iter: {it+1:5d} | Step: {self.step:7d} | Loss: {losses['loss']:8.5f}"
                     )
+                    
+                    nb_iter = 0
 
                     ## plot with Board
                     write_dict = {'step': self.step, 'train/epoch': epoch}
@@ -173,6 +192,7 @@ class STFSQTrainLoop:
                         for test_it, test_data in enumerate(self.test_dataloader):
                             gt_motion = test_data['x'].to(self.device)
                             gt_mask = test_data['x_mask'].to(self.device)
+                            gt_motion_denorm = self.test_dataset.denormalize(gt_motion.cpu()).cuda()
                             
                             pred_motion, loss_level, loss_vq, all_perplexity = self.model(gt_motion, gt_mask)
                             pred_motion_denorm = self.test_dataset.denormalize(pred_motion.cpu()).cuda()
@@ -180,12 +200,12 @@ class STFSQTrainLoop:
                             for i in range(pred_motion_denorm.shape[0]):
                                 nb_iters += 1
                                 motion_len = pred_motion_denorm.shape[1] - torch.sum(gt_mask[i]).item()
-                                mpjpe += calculate_mpjpe(gt_motion[i][:motion_len].reshape(motion_len, 22, 3), pred_motion_denorm[i][:motion_len].reshape(motion_len, 22, 3)).mean()
+                                mpjpe += calculate_mpjpe(gt_motion_denorm[i][:motion_len].reshape(motion_len, 22, 3), pred_motion_denorm[i][:motion_len].reshape(motion_len, 22, 3)).mean()
                             
                         mpjpe = mpjpe / nb_iters
-                        logger.info(f"[TEST] ==> MPJPE: {mpjpe.item():.5f}")
+                        logger.info(f"[TEST] ==> MPJPE: {1000*mpjpe.item():.5f}")
                         
-                        write_dict = {'step': self.step, 'test/epoch': epoch, 'test/mpjpe': mpjpe.item()}
+                        write_dict = {'step': self.step, 'test/mpjpe': 1000*mpjpe.item()}
                         Board().write(write_dict)
                             
                             
