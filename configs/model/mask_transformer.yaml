@@ -1,0 +1,52 @@
+name: MASK_TRANS
+
+## modeling space
+input_feats: -1
+data_repr: 'pos'
+arch: 'trans_enc'
+
+## conditions
+## 1. contact
+contact_model:
+  contact_type: 'contact_cont_joints' # ['contact_one_joints', 'contact_all_joints', 'contact_cont_joints', 'contact_pelvis']
+  contact_joints: [0, 10, 11, 12, 20, 21]
+
+  planes: [32, 64, 128, 256]
+  num_points: ${task.dataset.num_points}
+  blocks: [2, 2, 2, 2]
+
+## 2. text
+text_model:
+  version: 'ViT-B/32'
+  max_length: 32
+
+
+## STVQVAE
+sthvqvae:
+  code_dim: 256
+  output_emb_width: 256
+  width: 384
+  nb_code: 1000
+  down_t: 2
+  stride_t: 2
+  depth: 3
+  dilation_growth_rate: 3
+  quantizer: hfsq
+  nb_joints: 22
+  v_patch_nums: [16, 24, 32, 33, 33]
+  norm: null
+  rand_ratio: 0.0
+  recons_loss: l1_smooth
+  activation: relu
+  resume_pth: "/mnt/lustre/home/jingze/dev/motion/st_afford_motion/outputs/stage1/2024-10-31_19-48-13_stfsq_ddp4_lvl0.1_vq0.01/"
+
+## MaskTransformer # TODO
+transformer:
+  embed_dim: 1024
+  clip_dim: 512
+  block_size: 300
+  num_layers: 9
+  n_head: 16
+  drop_out_rate: 0.1
+  fc_rate: 4
+  use_diff_head: false

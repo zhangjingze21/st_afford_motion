@@ -1,24 +1,20 @@
 ## task
-name: 'motion quantization'
+name: 'mask modeling'
 
 ## train
 train:
-  lr: 5e-5
-  batch_size: 256
+  lr: 1e-4
+  batch_size: 32
   num_workers: 4
-  max_steps: 300000 # max steps to train
-  log_every_step: 100 # log every ${log_every_step} steps
-  save_every_step: 50000 # save model every ${save_every_step} steps
-  test_every_step: 500
+  max_steps: 100000 # max steps to train
+  log_every_step: 10 # log every ${log_every_step} steps
+  save_every_step: 10000 # save model every ${save_every_step} steps
   phase: 'all' # train or all
 
   resume_ckpt: '' # resume from checkpoint
   weight_decay: 0.0
   lr_anneal_steps: 0
   schedule_sampler_type: 'uniform'
-
-  loss_level: 0.1
-  loss_vq: 0.01
 
 ## test
 test:
@@ -36,7 +32,7 @@ sample:
 
 ## dataset
 dataset:
-  name: 'MotionDataset'
+  name: 'ContactMotionDataset'
   data_dir: './data'
   shuffle_seed: ${seed}
   sets: ['HUMANISE'] # ['HumanML3D', 'HUMANISE', 'PROX']
@@ -53,12 +49,10 @@ dataset:
   num_points: 8192
   min_horizon: 24
   max_horizon: 132
-  mix_train_ratio: 0.0
-
-  contact_folder: ''
+  mix_train_ratio: 0.5
 
   ## transforms
-  train_transforms: ['NumpyToTensor']
+  train_transforms: ['RandomRotation','ApplyTransformCMDM','NumpyToTensor']
   test_transforms: ['NumpyToTensor']
   transform_cfg:
     gravity_dim: 2
