@@ -66,14 +66,6 @@ class MASK_TRANS(nn.Module):
         super().__init__()
         self.device = kwargs['device'] if 'device' in kwargs else 'cpu'
         
-        # load the pretrained hvqvae model and freeze it
-        self.hvqvae = SpatialHumanVQVAE(cfg.sthvqvae).to(self.device)
-        ckpt = natsorted(glob.glob(os.path.join(cfg.sthvqvae.resume_pth, 'ckpt', 'model*.pt')))
-        assert len(ckpt) > 0, 'No checkpoint found.'
-        load_ckpt(self.hvqvae, ckpt[-1])
-        self.hvqvae.eval()
-        for param in self.hvqvae.parameters():
-            param.requires_grad = False
         self.nb_code = cfg.sthvqvae.nb_code
         
         self.v_patch_nums = cfg.sthvqvae.v_patch_nums
@@ -177,8 +169,8 @@ class MASK_TRANS(nn.Module):
             if 'c_pc_erase' in kwargs:
                 cont_emb = cont_emb * (1. - kwargs['c_pc_erase'].unsqueeze(-1).float())
             cont_emb = self.contact_adapter(cont_emb) # [bs, num_groups, latent_dim], for trans_enc
-        
-        motion_tokens = self.hvqvae.encode(x) # (bs, ntokens=138)    
+            
+        motion_tokens = kwargs['x_token'] # (bs, ntokens=138)    
         # TODO: add code to mask the motion tokens (similar to the code in momask)
         # prepare mask
         bs = motion_tokens.shape[0]
@@ -212,10 +204,10 @@ class MASK_TRANS(nn.Module):
         logits = self.trans_head(feat)
         loss, pred_id, acc = cal_performance(logits.permute(0, 2, 1), target, ignore_index=self.nb_code)
         
-        pred_motion_tokens = torch.argmax(logits, dim=-1) 
-        pred_motion = self.hvqvae.forward_decoder(pred_motion_tokens)
+        # pred_motion_tokens = torch.argmax(logits, dim=-1) 
+        # pred_motion = self.hvqvae.forward_decoder(pred_motion_tokens)
         
-        return loss, acc, pred_motion
+        return loss, acc
     
     @torch.no_grad()
     def sample(self, nb_iter, **kwargs):

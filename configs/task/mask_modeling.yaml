@@ -32,7 +32,7 @@ sample:
 
 ## dataset
 dataset:
-  name: 'ContactMotionDataset'
+  name: 'ContactMotionTokenizeDataset'
   data_dir: './data'
   shuffle_seed: ${seed}
   sets: ['HUMANISE'] # ['HumanML3D', 'HUMANISE', 'PROX']
@@ -58,6 +58,8 @@ dataset:
     gravity_dim: 2
     random_mask_prob: 0.1
     random_mask_prob_pc: 0.1
+
+  sthvqvae: ${model.sthvqvae}
   
 ## for visualization
 visualizer:

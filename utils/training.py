@@ -130,6 +130,9 @@ class MaskTransformerTrainLoop:
                 if 'x_mask' in data:
                     x_kwargs['x_mask'] = data['x_mask'].to(self.device)
                 
+                if 'x_token' in data:
+                    x_kwargs['x_token'] = data['x_token'].to(self.device)
+                
                 for key in data:
                     if key.startswith('c_') :
                         if torch.is_tensor(data[key]):
@@ -140,7 +143,7 @@ class MaskTransformerTrainLoop:
                 ## one step optimization
                 self.optimizer.zero_grad()
 
-                loss, acc, _ = self.model(x, **x_kwargs)
+                loss, acc = self.model(x, **x_kwargs)
                 
                 loss.backward()
 
@@ -156,7 +159,7 @@ class MaskTransformerTrainLoop:
                     )
 
                     ## plot with Board
-                    write_dict = {'step': self.step, 'train/epoch': epoch, 'train/loss': loss.item(), 'train/acc': acc.item()}
+                    write_dict = {'step': self.step, 'train/epoch': epoch, 'train/loss': loss.item(), 'train/acc': acc}
                     Board().write(write_dict)
 
                 if self.gpu == 0 and self.step % self.save_every_step == 0:

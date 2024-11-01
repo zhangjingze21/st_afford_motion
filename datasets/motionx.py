@@ -2,6 +2,7 @@ import os
 import random
 import glob
 import numpy as np
+import torch
 import pandas as pd
 from tqdm import tqdm
 from loguru import logger
@@ -14,6 +15,10 @@ from natsort import natsorted
 from datasets.base import DATASET
 from datasets.transforms import make_default_transform
 from utils.misc import compute_repr_dimesion
+
+from models.hvqvae.st_hvqvae import SpatialHumanVQVAE
+from utils.training import load_ckpt
+
 
 def full_name(dataset: str, scene_id: str, folder: bool=False) -> str:
     if dataset == 'HUMANISE':
@@ -69,9 +74,19 @@ class ContactMotionTokenizeDataset(Dataset):
         else:
             self.transform_list = cfg.test_transforms
         self.transform = make_default_transform(self.transform_list, cfg.transform_cfg)
+        
+        # load the pretrained hvqvae model and freeze it
+        self.hvqvae = SpatialHumanVQVAE(cfg.sthvqvae).to(self.gpu)
+        ckpt = natsorted(glob.glob(os.path.join(cfg.sthvqvae.resume_pth, 'ckpt', 'model*.pt')))
+        assert len(ckpt) > 0, 'No checkpoint found.'
+        load_ckpt(self.hvqvae, ckpt[-1])
+        self.hvqvae.eval()
+        for param in self.hvqvae.parameters():
+            param.requires_grad = False
 
-        self._load_datasets()
         self._prepare_statistics()
+        self._load_datasets()
+        
     
     def _load_split_ids(self):
         split_ids = defaultdict(list)
@@ -204,6 +219,7 @@ class ContactMotionTokenizeDataset(Dataset):
             cont_file = os.path.join(self.data_dir, f'{s}/contact_motion/contacts_fur/{i:0>5}.npz')
         contact = np.load(cont_file)
         motion = np.load(os.path.join(self.data_dir, f'{s}/contact_motion/motions/{i:0>5}.npy'))
+        motion_token = np.load(os.path.join(self.data_dir, f'{s}/contact_motion/motion_tokens/{i:0>5}.npy'))
         points = contact['points'].astype(np.float32)
         dist = contact['dist'].astype(np.float32)
 
@@ -244,6 +260,7 @@ class ContactMotionTokenizeDataset(Dataset):
         data = {
             'x': motion,
             'x_mask': motion_mask,
+            'x_token': motion_token,
             ## conditions
             'c_pc_xyz': xyz,
             'c_pc_contact': contact,
