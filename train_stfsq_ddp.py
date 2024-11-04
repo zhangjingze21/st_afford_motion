@@ -61,7 +61,7 @@ def main(cfg: DictConfig) -> None:
         pin_memory=True,
     )
     
-    test_dataset = create_dataset(cfg.task.dataset, "test", gpu=cfg.gpu, contact_folder="/mnt/lustre/home/jingze/dev/motion/st_afford_motion/data/HUMANISE")
+    test_dataset = create_dataset(cfg.task.test_dataset, "test", gpu=cfg.gpu, contact_folder="data/HUMANISE")
     logger.info(f'Load test dataset size: {len(test_dataset)}')
     test_dataloader = test_dataset.get_dataloader(
         batch_size=cfg.task.train.batch_size,

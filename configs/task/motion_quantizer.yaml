@@ -7,9 +7,9 @@ train:
   batch_size: 256
   num_workers: 4
   max_steps: 300000 # max steps to train
-  log_every_step: 100 # log every ${log_every_step} steps
+  log_every_step: 200 # log every ${log_every_step} steps
   save_every_step: 50000 # save model every ${save_every_step} steps
-  test_every_step: 500
+  test_every_step: 1000
   phase: 'all' # train or all
 
   resume_ckpt: '' # resume from checkpoint
@@ -36,6 +36,37 @@ sample:
 
 ## dataset
 dataset:
+  name: 'ContactMotionDataset'
+  data_dir: './data'
+  shuffle_seed: ${seed}
+  sets: ['HUMANISE'] # ['HumanML3D', 'HUMANISE', 'PROX']
+  sets_config:
+    HUMANISE:
+      ratio: 1.0 # the ratio of the dataset to use
+      load_text: true
+  
+  data_repr: ${model.data_repr}
+  contact_type: ${model.contact_model.contact_type}
+  contact_joints: ${model.contact_model.contact_joints}
+  use_raw_dist: false
+  sigma: 0.5
+  num_points: 8192
+  min_horizon: 24
+  max_horizon: 132
+  mix_train_ratio: 0.0
+
+  contact_folder: ''
+
+  ## transforms
+  train_transforms: ['RandomRotation', 'ApplyTransformCMDM', 'NumpyToTensor']
+  test_transforms: ['NumpyToTensor']
+  transform_cfg:
+    gravity_dim: 2
+    random_mask_prob: 0.1
+    random_mask_prob_pc: 0.1
+
+  ## dataset
+test_dataset:
   name: 'MotionDataset'
   data_dir: './data'
   shuffle_seed: ${seed}
@@ -58,7 +89,7 @@ dataset:
   contact_folder: ''
 
   ## transforms
-  train_transforms: ['NumpyToTensor']
+  train_transforms: ['RandomRotation', 'ApplyTransformCMDM', 'NumpyToTensor']
   test_transforms: ['NumpyToTensor']
   transform_cfg:
     gravity_dim: 2
