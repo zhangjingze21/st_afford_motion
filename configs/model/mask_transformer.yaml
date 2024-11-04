@@ -38,7 +38,7 @@ sthvqvae:
   rand_ratio: 0.0
   recons_loss: l1_smooth
   activation: relu
-  resume_pth: "/mnt/lustre/home/jingze/dev/motion/st_afford_motion/outputs/stage1/2024-10-31_19-48-13_stfsq_ddp4_lvl0.1_vq0.01/"
+  resume_pth: "outputs/stage1/2024-10-31_19-48-13_stfsq_ddp4_lvl0.1_vq0.01/"
 
 ## MaskTransformer # TODO
 transformer:
