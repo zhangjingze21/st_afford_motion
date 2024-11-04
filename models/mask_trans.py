@@ -8,6 +8,7 @@ from natsort import natsorted
 from torch.nn import functional as F
 from omegaconf import DictConfig
 from utils.training import load_ckpt
+from torch.distributions import Categorical
 
 from models.base import Model
 from models.modules import SceneMapEncoderDecoder, SceneMapEncoder
@@ -58,7 +59,25 @@ def get_mask_subset_prob(mask, prob):
 def uniform(shape, device=None):
     return torch.zeros(shape, device=device).float().uniform_(0, 1)
 
+def eval_decorator(fn):
+    def inner(model, *args, **kwargs):
+        was_training = model.training
+        model.eval()
+        out = fn(model, *args, **kwargs)
+        model.train(was_training)
+        return out
+    return inner
 
+def top_k(logits, thres = 0.9, dim = 1):
+    k = math.ceil((1 - thres) * logits.shape[dim])
+    val, ind = logits.topk(k, dim = dim)
+    probs = torch.full_like(logits, float('-inf'))
+    probs.scatter_(dim, ind, val)
+    # func verified
+    # print(probs)
+    # print(logits)
+    # raise
+    return probs
 
 @Model.register()
 class MASK_TRANS(nn.Module):
@@ -67,6 +86,16 @@ class MASK_TRANS(nn.Module):
         self.device = kwargs['device'] if 'device' in kwargs else 'cpu'
         
         self.nb_code = cfg.sthvqvae.nb_code
+        self.mask_idx = self.nb_code
+        
+        # load the pretrained hvqvae model and freeze it
+        self.hvqvae = SpatialHumanVQVAE(cfg.sthvqvae).to(self.device)
+        ckpt = natsorted(glob.glob(os.path.join(cfg.sthvqvae.resume_pth, 'ckpt', 'model*.pt')))
+        assert len(ckpt) > 0, 'No checkpoint found.'
+        load_ckpt(self.hvqvae, ckpt[-1])
+        self.hvqvae.eval()
+        for param in self.hvqvae.parameters():
+            param.requires_grad = False
         
         self.v_patch_nums = cfg.sthvqvae.v_patch_nums
         self.unit_length = cfg.sthvqvae.down_t ** 2
@@ -170,8 +199,11 @@ class MASK_TRANS(nn.Module):
                 cont_emb = cont_emb * (1. - kwargs['c_pc_erase'].unsqueeze(-1).float())
             cont_emb = self.contact_adapter(cont_emb) # [bs, num_groups, latent_dim], for trans_enc
             
-        motion_tokens = kwargs['x_token'] # (bs, ntokens=138)    
-        # TODO: add code to mask the motion tokens (similar to the code in momask)
+        
+        if 'x_token' in kwargs:
+            motion_tokens = kwargs['x_token'] # (bs, ntokens=138)   
+        else:
+            motion_tokens = self.hvqvae.encode(x) # (bs, ntokens=138)
         # prepare mask
         bs = motion_tokens.shape[0]
         ntokens = motion_tokens.shape[1]
@@ -197,18 +229,85 @@ class MASK_TRANS(nn.Module):
         
         motion_mask = compute_mask_from_length(m_length=self.max_motion_length-kwargs['x_mask'].sum(dim=-1).cpu().numpy(), max_motion_length=self.max_motion_length, unit_length=self.unit_length, v_patch_nums=self.v_patch_nums)
         motion_mask = torch.from_numpy(motion_mask).to(self.device)
-        feat = self.trans_base(motion_tokens, text_emb, cont_emb, motion_mask=motion_mask, pc_mask=cont_mask)
+        feat = self.trans_base(x_idxs, text_emb, cont_emb, motion_mask=motion_mask, pc_mask=cont_mask)
     
         feat = feat[:, -self.motion_seq_len:]
         
         logits = self.trans_head(feat)
         loss, pred_id, acc = cal_performance(logits.permute(0, 2, 1), target, ignore_index=self.nb_code)
         
-        # pred_motion_tokens = torch.argmax(logits, dim=-1) 
         # pred_motion = self.hvqvae.forward_decoder(pred_motion_tokens)
-        
-        return loss, acc
+        if self.training:
+            return loss, acc
+        else:
+            return logits
     
     @torch.no_grad()
-    def sample(self, nb_iter, **kwargs):
-        raise NotImplementedError
+    def sample(self, x, if_categorial=False, num_iter=10, **kwargs):
+        B = x.shape[0]
+        L = sum(self.v_patch_nums)
+        
+        # init random token sequence
+        xs = torch.full((B, L), self.mask_idx, dtype=torch.long, device=self.device)
+        scores = torch.zeros(B, L, device=self.device)
+        
+        ## text embedding
+        if self.text_feat_type == 'clip':
+            text_emb = encode_text_clip(self.text_model, kwargs['c_text'], max_length=self.text_max_length, device=self.device)
+            text_emb = text_emb.unsqueeze(1).detach().float() # (bs, 1, embdim=512)
+            text_mask = torch.zeros((x.shape[0], 1), dtype=torch.bool, device=self.device) # (bs, 1)
+        elif self.text_feat_type == 'bert':
+            text_emb, text_mask = encode_text_bert(self.tokenizer, self.text_model, kwargs['c_text'], max_length=self.text_max_length, device=self.device)
+            text_mask = ~(text_mask.to(torch.bool)) # 0 for valid, 1 for invalid
+        else:
+            raise NotImplementedError
+        
+        text_emb = self.language_adapter(text_emb) # (bs, 1, latent_dim)
+        
+        ## encode contact
+        cont_emb = self.contact_encoder(kwargs['c_pc_xyz'], kwargs['c_pc_contact'])
+        if hasattr(self, 'contact_adapter'): # trans_enc
+            cont_mask = torch.zeros((x.shape[0], cont_emb.shape[1]), dtype=torch.bool, device=self.device)
+            if 'c_pc_mask' in kwargs:
+                cont_mask = torch.logical_or(cont_mask, kwargs['c_pc_mask'].repeat(1, cont_mask.shape[1]))
+            if 'c_pc_erase' in kwargs:
+                cont_emb = cont_emb * (1. - kwargs['c_pc_erase'].unsqueeze(-1).float())
+            cont_emb = self.contact_adapter(cont_emb) # [bs, num_groups, latent_dim], for trans_enc
+            
+        motion_mask = compute_mask_from_length(m_length=self.max_motion_length-kwargs['x_mask'].sum(dim=-1).cpu().numpy(), max_motion_length=self.max_motion_length, unit_length=self.unit_length, v_patch_nums=self.v_patch_nums)
+        motion_mask = torch.from_numpy(motion_mask).to(self.device)
+
+        for iter in torch.linspace(0, 1, num_iter, device=self.device):
+            rand_mask_prob = cosine_schedule(iter)
+            
+            num_token_masked = torch.round(rand_mask_prob * L).clamp(min=1)  # (b, )
+            
+            sorted_indices = scores.argsort(dim=1)  # (b, k), sorted_indices[i, j] = the index of j-th lowest element in scores on dim=1
+            ranks = sorted_indices.argsort(dim=1)  # (b, k), rank[i, j] = the rank (0: lowest) of scores[i, j] on dim=1
+            is_mask = (ranks < num_token_masked.unsqueeze(-1))
+            xs = torch.where(is_mask, self.mask_idx, xs)
+            
+            feat = self.trans_base(xs, text_emb, cont_emb, motion_mask=motion_mask, pc_mask=cont_mask)
+            feat = feat[:, -self.motion_seq_len:]
+            logits = self.trans_head(feat)
+            
+            probs = F.softmax(logits, dim=-1)
+            
+            # clean low prob tokens
+            probs = top_k(probs, thres=0.9, dim=-1)
+            
+            
+            if if_categorial:
+                dist = Categorical(probs)
+                idx = dist.sample()
+            else:
+                _, idx = torch.topk(probs, k=1, dim=-1)
+                idx = idx.squeeze(-1)
+                
+            scores = probs.gather(-1, idx.unsqueeze(-1)).squeeze(-1)
+            scores = scores.masked_fill(~is_mask, 1e5)
+            
+            xs = torch.where(is_mask, idx, xs)
+            
+        pred_motion = self.hvqvae.forward_decoder(xs)
+        return pred_motion

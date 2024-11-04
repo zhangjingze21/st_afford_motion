@@ -29,7 +29,8 @@ def test(cfg: DictConfig) -> None:
         device = 'cpu'
     
     # prepare testing dataset
-    test_dataset = create_dataset(cfg.task.dataset, 'test', gpu=cfg.gpu, **cfg.task.test)
+    # test_dataset = create_dataset(cfg.task.dataset, 'test', gpu=cfg.gpu, **cfg.task.test)
+    test_dataset = create_dataset(cfg.task.dataset, 'debug', gpu=cfg.gpu, **cfg.task.test)
     logger.info(f'Load test dataset size: {len(test_dataset)}')
     
     test_dataloader = test_dataset.get_dataloader(
@@ -63,8 +64,6 @@ def test(cfg: DictConfig) -> None:
     else:
         k_samples_idxs = []
     logger.info(f'k_samples_idxs: {k_samples_idxs}')
-    
-    import ipdb; ipdb.set_trace()
 
     for i, data in enumerate(test_dataloader):
         logger.info(f"batch index: {i}, is k_sample_batch: {i in k_samples_idxs}, case index: {data['info_index']}")
@@ -87,19 +86,12 @@ def test(cfg: DictConfig) -> None:
         sample_list_np = []
         k_samples_list_np = []
         for k in range(repeat_times):
-            if cfg.model.name.startswith('CMDM'):
-                ## if test with CMDM, the input c_pc_contact contains k samples, 
-                ## so we need remove this item in x_kwargs, and use the k-th contact map
-                x_kwargs['c_pc_contact'] = data['c_pc_contact'][:, k, :, :].to(device)
+            x_kwargs['c_pc_contact'] = data['c_pc_contact'][:, k, :, :].to(device)
 
-            sample = sample_fn(
-                model,
-                x.shape,
-                clip_denoised=False,
-                noise=None,
-                model_kwargs=x_kwargs,
-                progress=True,
-            )
+            # sample = model.sample(x, **x_kwargs)
+            motion_token = model.hvqvae.encode(x.to(device))
+            sample = model.hvqvae.forward_decoder(motion_token)
+            # sample = x
 
             if k == 0:
                 for bsi in range(B):

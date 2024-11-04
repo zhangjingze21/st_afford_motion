@@ -123,7 +123,10 @@ class MaskTransformerTrainLoop:
             self._freeze_scene_model_batchnorm() # freeze batchnorm in scene model if the model has scene model
             if self.is_distributed:
                 self.dataloader.sampler.set_epoch(epoch)
+            avg_loss, avg_acc = 0., 0.
+            nb_iter = 0
             for it, data in enumerate(self.dataloader): 
+                nb_iter += 1
                 x = data['x'].to(self.device)
 
                 x_kwargs = {}
@@ -144,6 +147,8 @@ class MaskTransformerTrainLoop:
                 self.optimizer.zero_grad()
 
                 loss, acc = self.model(x, **x_kwargs)
+                avg_acc += acc
+                avg_loss += loss
                 
                 loss.backward()
 
@@ -154,6 +159,11 @@ class MaskTransformerTrainLoop:
                 ## log with loguru, plot with Board
                 if self.gpu == 0 and self.step % self.log_every_step == 0:
                     ## log with loguru
+                    loss = avg_loss / nb_iter
+                    acc = avg_acc / nb_iter
+                    nb_iter = 0
+                    avg_acc = 0.
+                    avg_loss = 0.
                     logger.info(
                         f"[TRAIN] ==> Epoch: {epoch:3d} | Iter: {it+1:5d} | Step: {self.step:7d} | Loss: {loss:8.5f} | Acc: {acc:8.5f}"
                     )

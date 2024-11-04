@@ -1,3 +1,11 @@
+#! /bin/bash
+#SBATCH --partition=SC-A800
+#SBATCH --job-name="humanise"
+#SBATCH --gres=gpu:1
+#SBATCH --qos=plus
+#SBATCH --cpus-per-task=48
+#SBATCH --time 24:00:00
+
 EXP_DIR=$1
 SEED=$2
 
@@ -6,11 +14,11 @@ then
     SEED=2023
 fi
 
-python test.py hydra/job_logging=none hydra/hydra_logging=none \
+/mnt/lustre/home/jingze/anaconda3/envs/afford/bin/python test.py hydra/job_logging=none hydra/hydra_logging=none \
             exp_dir=${EXP_DIR} \
             seed=${SEED} \
             output_dir=outputs \
-            diffusion.steps=500 \
+            diffusion.steps=10 \
             task=contact_gen \
             model=cdm \
             model.arch=Perceiver \

@@ -1167,7 +1167,7 @@ class ContactMotionDataset(Dataset):
         self.min_horizon = cfg.min_horizon
         self.mix_train_ratio = cfg.mix_train_ratio
 
-        if self.phase == 'test':
+        if self.phase == 'test' or self.phase == 'debug':
             self.contact_folder = kwargs['contact_folder'] # use predict contact map for evaluation
             assert self.contact_folder != '', "Please specify the pre-generated contact folder for testing"
 
@@ -1229,7 +1229,7 @@ class ContactMotionDataset(Dataset):
         self.indices = list(range(len(self.all_data)))
         if self.phase == 'train' or self.phase == 'all':
             random.shuffle(self.indices)
-        if self.phase == 'test':
+        if self.phase == 'test' or self.phase == 'debug':
             random.seed(self.shuffle_seed) # for test set, we use the same random seed to ensure the same order
             random.shuffle(self.indices)
     
@@ -1324,7 +1324,7 @@ class ContactMotionDataset(Dataset):
         ## scene and contact
         xyz = points[:, 0:3]
         contact = self._extract_contact(dist)
-        if self.phase == 'test':
+        if self.phase == 'test' or self.phase == 'debug':
             ## load the pre-generated dist map
             ## Note that, the pre-generated dist map array contains multi samples, i.e, the contact shape is (k, n, j)
             contact = np.load(os.path.join(self.contact_folder, f'{s}/pred_contact/{i:0>5}.npy')) 
@@ -1363,7 +1363,7 @@ class ContactMotionDataset(Dataset):
             'info_scene_mesh': os.path.join(self.data_dir, f'{s}/scenes/{full_name(s, scene_id, True)}.ply'),
         }
 
-        if self.phase == 'test':
+        if self.phase == 'test' or self.phase == 'debug':
             if s == 'HUMANISE':
                 target_mask = np.load(os.path.join(self.data_dir, f'{s}/contact_motion/target_mask/{i:0>5}.npy'))
                 data['info_obj_mask'] = target_mask
